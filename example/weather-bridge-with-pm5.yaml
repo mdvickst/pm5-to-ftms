@@ -1,0 +1,108 @@
+# Weather bridge (Acurite 5n1 over CC1101) + Concept2 PM5 -> FTMS rower bridge
+# on one ESP32 (ESP-WROOM-32 dev board).
+# Wiring for the CC1101: VCC->3V3, GND->GND, SCK->GPIO18, SI->GPIO23, SO->GPIO19,
+#                        CSN->GPIO5, GDO0->GPIO32, GDO2->GPIO33
+esphome:
+  name: weather-bridge
+  friendly_name: Weather Bridge
+  project:
+    name: mdvickst.accurite-esp-proxy
+    version: 1.1.0
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+api:
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+external_components:
+  - source: github://mdvickst/accurite-esp-proxy
+    components: [acurite_5n1]
+  - source: github://mdvickst/pm5-to-ftms
+    components: [pm5_ftms]
+  # For local development use instead:
+  # - source:
+  #     type: local
+  #     path: ../components
+  #   components: [pm5_ftms]
+
+# ---------------------------------------------------------------- weather ----
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23
+
+cc1101:
+  cs_pin: GPIO5
+  frequency: 433.92MHz
+
+remote_receiver:
+  id: rf_rx
+  pin: GPIO33
+  filter: 3us
+  idle: 800us
+  rmt_symbols: 512
+  receive_symbols: 512
+  filter_symbols: 48
+
+acurite_5n1:
+  id: weather
+  receiver_id: rf_rx
+  sensor_id: 0x5C6
+  stale_timeout: 5min
+
+sensor:
+  - platform: acurite_5n1
+    acurite_5n1_id: weather
+    temperature:
+      name: "Outdoor temperature"
+    humidity:
+      name: "Outdoor humidity"
+    wind_speed:
+      name: "Wind speed"
+    wind_direction:
+      name: "Wind direction"
+    rain:
+      name: "Rainfall total"
+
+binary_sensor:
+  - platform: acurite_5n1
+    acurite_5n1_id: weather
+    battery_low:
+      name: "Weather station battery low"
+
+# ------------------------------------------------------------ PM5 -> FTMS ----
+esp32_ble:
+  name: "PM5 Row"          # what the Peloton app shows
+  max_connections: 2       # 1 to the PM5, 1 from the phone
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+  # Logs any PM5 it hears, so you can find its MAC address for ble_client below.
+  on_ble_advertise:
+    - then:
+        - lambda: |-
+            if (x.get_name().rfind("PM5", 0) == 0)
+              ESP_LOGI("pm5_scan", "Found %s at %s", x.get_name().c_str(), x.address_str());
+
+esp32_ble_server:
+  max_clients: 1
+
+ble_client:
+  - mac_address: !secret pm5_mac   # e.g. "D1:23:45:67:89:AB"
+    id: pm5
+
+pm5_ftms:
+  ble_client_id: pm5
