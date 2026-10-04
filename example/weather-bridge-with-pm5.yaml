@@ -94,8 +94,13 @@ esp32_ble_tracker:
   on_ble_advertise:
     - then:
         - lambda: |-
-            if (x.get_name().rfind("PM5", 0) == 0)
-              ESP_LOGI("pm5_scan", "Found %s at %s", x.get_name().c_str(), x.address_str());
+            const char *name = x.get_name().c_str();
+            if (strncmp(name, "PM5", 3) == 0) {
+              uint64_t a = x.address_uint64();
+              ESP_LOGI("pm5_scan", "Found %s at %02X:%02X:%02X:%02X:%02X:%02X", name,
+                       (int) (a >> 40) & 0xFF, (int) (a >> 32) & 0xFF, (int) (a >> 24) & 0xFF,
+                       (int) (a >> 16) & 0xFF, (int) (a >> 8) & 0xFF, (int) a & 0xFF);
+            }
 
 esp32_ble_server:
   max_clients: 1
