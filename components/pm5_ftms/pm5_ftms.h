@@ -35,6 +35,7 @@ class PM5FTMSComponent : public Component, public ble_client::BLEClientNode {
   uint32_t last_data_ms_{0};
   uint32_t last_notify_ms_{0};
   bool pm5_connected_{false};
+  bool advertising_requested_{false};
 
   // PM5 notification handles we registered for.
   uint16_t h_general_{0}, h_additional_{0}, h_additional2_{0}, h_stroke2_{0};

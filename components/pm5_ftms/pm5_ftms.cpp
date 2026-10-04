@@ -73,6 +73,14 @@ void PM5FTMSComponent::on_control_point_write_(std::span<const uint8_t> value) {
 }
 
 void PM5FTMSComponent::loop() {
+  // A server whose services are created in code (not YAML) doesn't advertise
+  // on its own in ESPHome 2026.9+, so ask for it once BLE is up.
+  if (!this->advertising_requested_ && esp32_ble::global_ble->is_active()) {
+    esp32_ble::global_ble->advertising_start();
+    this->advertising_requested_ = true;
+    ESP_LOGI(TAG, "Advertising FTMS rower");
+  }
+
   uint32_t now = millis();
   if (now - this->last_notify_ms_ < NOTIFY_INTERVAL_MS)
     return;
