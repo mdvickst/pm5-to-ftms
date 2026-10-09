@@ -111,3 +111,12 @@ ble_client:
 
 pm5_ftms:
   ble_client_id: pm5
+  # The PM5 can't sleep while connected, so the bridge only connects while an
+  # app (Peloton) is connected to "PM5 Row", and drops the PM5 after this long
+  # without rowing.
+  idle_timeout: 10min
+  # After an idle drop, wait this long (so the PM5 falls asleep) before
+  # listening for it again; waking the PM5 then reconnects.
+  reconnect_holdoff: 15min
+  pm5_connected:
+    name: "PM5 connected"

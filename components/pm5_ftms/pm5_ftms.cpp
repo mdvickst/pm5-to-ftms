@@ -8,6 +8,8 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 
+#include <cinttypes>
+
 namespace esphome {
 namespace pm5_ftms {
 
@@ -47,6 +49,65 @@ void PM5FTMSComponent::set_server(esp32_ble_server::BLEServer *server) {
   status->add_descriptor(new BLE2902());  // NOLINT(cppcoreguidelines-owning-memory)
 
   server->enqueue_start_service(svc);
+
+  server->on_connect([this](uint16_t) {
+    this->app_clients_++;
+    this->idle_dropped_ = false;
+    this->set_pm5_enabled_(true, "app connected");
+  });
+  server->on_disconnect([this](uint16_t) {
+    if (this->app_clients_ > 0)
+      this->app_clients_--;
+    if (this->app_clients_ == 0) {
+      this->idle_dropped_ = false;
+      this->set_pm5_enabled_(false, "app disconnected");
+    }
+  });
+}
+
+void PM5FTMSComponent::set_pm5_enabled_(bool enabled, const char *reason) {
+  if (this->parent()->enabled == enabled)
+    return;
+  ESP_LOGI(TAG, "%s PM5 link (%s)", enabled ? "Enabling" : "Dropping", reason);
+  this->parent()->set_enabled(enabled);
+}
+
+void PM5FTMSComponent::set_pm5_connected_(bool connected) {
+  this->pm5_connected_ = connected;
+  if (connected)
+    this->last_progress_ms_ = millis();
+  if (this->connected_sensor_ != nullptr)
+    this->connected_sensor_->publish_state(connected);
+}
+
+void PM5FTMSComponent::manage_connection_(uint32_t now) {
+  // ble_client enables itself in its own setup(); hold it off until an app connects.
+  if (!this->initialized_) {
+    this->initialized_ = true;
+    if (this->app_clients_ == 0)
+      this->set_pm5_enabled_(false, "waiting for an app to connect");
+    if (this->connected_sensor_ != nullptr)
+      this->connected_sensor_->publish_state(false);
+  }
+
+  if (this->state_.distance_dm != this->last_distance_dm_ || this->state_.stroke_count != this->last_stroke_count_) {
+    this->last_distance_dm_ = this->state_.distance_dm;
+    this->last_stroke_count_ = this->state_.stroke_count;
+    this->last_progress_ms_ = now;
+  }
+
+  if (this->pm5_connected_ && now - this->last_progress_ms_ > this->idle_timeout_ms_) {
+    this->set_pm5_enabled_(false, "no rowing activity");
+    this->idle_dropped_ = true;
+    this->idle_dropped_ms_ = now;
+  }
+
+  // App still connected after an idle drop: once the PM5 has had time to
+  // sleep, listen for it again so waking it reconnects.
+  if (this->idle_dropped_ && this->app_clients_ > 0 && now - this->idle_dropped_ms_ > this->reconnect_holdoff_ms_) {
+    this->idle_dropped_ = false;
+    this->set_pm5_enabled_(true, "holdoff elapsed; waiting for PM5 to wake");
+  }
 }
 
 void PM5FTMSComponent::setup() {
@@ -56,7 +117,12 @@ void PM5FTMSComponent::setup() {
 }
 
 void PM5FTMSComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "PM5 -> FTMS bridge:\n  PM5 address: %s", this->parent()->address_str());
+  ESP_LOGCONFIG(TAG,
+                "PM5 -> FTMS bridge:\n"
+                "  PM5 address: %s\n"
+                "  Idle timeout: %" PRIu32 " s\n"
+                "  Reconnect holdoff: %" PRIu32 " s",
+                this->parent()->address_str(), this->idle_timeout_ms_ / 1000, this->reconnect_holdoff_ms_ / 1000);
 }
 
 void PM5FTMSComponent::on_control_point_write_(std::span<const uint8_t> value) {
@@ -82,6 +148,7 @@ void PM5FTMSComponent::loop() {
   }
 
   uint32_t now = millis();
+  this->manage_connection_(now);
   if (now - this->last_notify_ms_ < NOTIFY_INTERVAL_MS)
     return;
   this->last_notify_ms_ = now;
@@ -105,7 +172,7 @@ void PM5FTMSComponent::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_
 
     case ESP_GATTC_CLOSE_EVT:
       ESP_LOGW(TAG, "PM5 disconnected");
-      this->pm5_connected_ = false;
+      this->set_pm5_connected_(false);
       this->h_general_ = this->h_additional_ = this->h_additional2_ = this->h_stroke2_ = 0;
       break;
 
@@ -144,7 +211,7 @@ void PM5FTMSComponent::gattc_event_handler(esp_gattc_cb_event_t event, esp_gatt_
         ESP_LOGW(TAG, "Notify registration failed for handle %d", param->reg_for_notify.handle);
       if (this->pending_regs_ > 0 && --this->pending_regs_ == 0) {
         this->node_state = espbt::ClientState::ESTABLISHED;
-        this->pm5_connected_ = true;
+        this->set_pm5_connected_(true);
         ESP_LOGI(TAG, "Subscribed to PM5 rowing data");
       }
       break;

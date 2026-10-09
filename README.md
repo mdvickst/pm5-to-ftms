@@ -40,6 +40,16 @@ ble_client:
     id: pm5
 pm5_ftms:
   ble_client_id: pm5
+  idle_timeout: 10min        # optional (default 10min)
+  reconnect_holdoff: 15min   # optional (default 15min)
+  pm5_connected:             # optional binary sensor for Home Assistant
+    name: "PM5 connected"
 ```
+
+The PM5 can't sleep while something is connected to it, so the bridge only holds the PM5 link while an app is connected to "PM5 Row":
+
+- **App connects:** the bridge connects to the PM5 as soon as it sees it (wake the PM5 first).
+- **App disconnects:** the bridge drops the PM5 link.
+- **No rowing for `idle_timeout`:** the bridge drops the PM5 link even if the app is still connected. After `reconnect_holdoff` (long enough for the PM5 to fall asleep) it listens again, so waking the PM5 reconnects it.
 
 Host unit tests for the protocol layer: `make test`.
